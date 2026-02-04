@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
                 [{"kinds": [30023], "#t": ["idea"]}],
                 handle_new_idea
             )
-            asyncio.create_task(nostr_client.listen())
+            print("Nostr client connected and subscribed")
         except Exception as e:
             print(f"Nostr connection failed: {e}")
 
@@ -82,8 +82,17 @@ async def idea_card(event_id: str):
 
 @app.post("/api/ideas")
 async def create_idea(event: NostrEvent):
-    # Store directly in Qdrant (Nostr relay has concurrency issues with listener)
+    event_dict = event.model_dump()
     references = [tag[1] for tag in event.tags if tag[0] == "e"]
+
+    # Try to publish to Nostr relay (non-blocking if it fails)
+    if nostr_client:
+        try:
+            await nostr_client.publish_event(event_dict, timeout=3.0)
+        except Exception as e:
+            print(f"Nostr publish failed (storing locally): {e}")
+
+    # Always store in Qdrant as local cache
     store_idea(
         event_id=event.id,
         content=event.content,
@@ -94,7 +103,7 @@ async def create_idea(event: NostrEvent):
 
     # Broadcast to SSE clients
     for queue in event_queues:
-        await queue.put(event.model_dump())
+        await queue.put(event_dict)
 
     return {"status": "ok", "event_id": event.id}
 

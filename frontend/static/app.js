@@ -1,9 +1,34 @@
 // Load nostr-tools dynamically
 let nostrTools = null;
 (async () => {
-    nostrTools = await import('https://esm.sh/nostr-tools@2.1.0');
-    window.NostrTools = nostrTools;
+    try {
+        nostrTools = await import('https://esm.sh/nostr-tools@2.1.0');
+        window.NostrTools = nostrTools;
+    } catch (e) {
+        console.error('Failed to load nostr-tools:', e);
+        window.NostrTools = null;
+    }
 })();
+
+// Global error notification
+function showNotification(message, type = 'error') {
+    const existing = document.getElementById('notification');
+    if (existing) existing.remove();
+
+    const div = document.createElement('div');
+    div.id = 'notification';
+    div.className = `fixed bottom-4 right-4 px-4 py-3 rounded-lg shadow-lg z-50 transition-opacity ${
+        type === 'error' ? 'bg-red-600 text-white' :
+        type === 'success' ? 'bg-green-600 text-white' : 'bg-blue-600 text-white'
+    }`;
+    div.textContent = message;
+    document.body.appendChild(div);
+
+    setTimeout(() => {
+        div.style.opacity = '0';
+        setTimeout(() => div.remove(), 300);
+    }, 4000);
+}
 
 function ideaFlow() {
     return {
@@ -38,54 +63,68 @@ function ideaFlow() {
         },
 
         async generateKeys() {
-            if (!window.NostrTools) {
-                await new Promise(r => setTimeout(r, 500));
+            try {
                 if (!window.NostrTools) {
-                    console.error('NostrTools not loaded');
-                    return;
+                    await new Promise(r => setTimeout(r, 500));
+                    if (!window.NostrTools) {
+                        showNotification('Nostr-Bibliothek konnte nicht geladen werden. Bitte Seite neu laden.');
+                        return;
+                    }
                 }
+                const sk = window.NostrTools.generateSecretKey();
+                const pk = window.NostrTools.getPublicKey(sk);
+
+                // Convert Uint8Array to hex string
+                this.privateKey = Array.from(sk).map(b => b.toString(16).padStart(2, '0')).join('');
+                this.pubkey = pk;
+
+                localStorage.setItem('nostr_keys', JSON.stringify({
+                    pubkey: this.pubkey,
+                    privateKey: this.privateKey
+                }));
+
+                showNotification('Identität erstellt!', 'success');
+            } catch (e) {
+                console.error('Key generation error:', e);
+                showNotification('Fehler beim Erstellen der Identität');
             }
-            const sk = window.NostrTools.generateSecretKey();
-            const pk = window.NostrTools.getPublicKey(sk);
-
-            // Convert Uint8Array to hex string
-            this.privateKey = Array.from(sk).map(b => b.toString(16).padStart(2, '0')).join('');
-            this.pubkey = pk;
-
-            localStorage.setItem('nostr_keys', JSON.stringify({
-                pubkey: this.pubkey,
-                privateKey: this.privateKey
-            }));
         },
 
         async submitIdea() {
-            if (!this.newIdea.trim() || !this.pubkey) return;
+            if (!this.newIdea.trim()) {
+                showNotification('Bitte gib eine Idee ein');
+                return;
+            }
+            if (!this.pubkey) {
+                showNotification('Bitte erstelle zuerst eine Identität');
+                return;
+            }
             if (!window.NostrTools || !window.NostrTools.finalizeEvent) {
-                console.error('NostrTools not ready');
+                showNotification('Nostr-Bibliothek nicht bereit. Bitte Seite neu laden.');
                 return;
             }
 
             this.isSubmitting = true;
             this.submitStatus = null;
 
-            // Convert hex string to Uint8Array
-            const skBytes = new Uint8Array(this.privateKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-
-            const eventTemplate = {
-                kind: 30023,
-                created_at: Math.floor(Date.now() / 1000),
-                tags: [
-                    ['d', crypto.randomUUID()],
-                    ['t', 'idea'],
-                    ['client', 'ideaflow']
-                ],
-                content: this.newIdea
-            };
-
-            // finalizeEvent adds id, pubkey, and sig
-            const event = window.NostrTools.finalizeEvent(eventTemplate, skBytes);
-
             try {
+                // Convert hex string to Uint8Array
+                const skBytes = new Uint8Array(this.privateKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+
+                const eventTemplate = {
+                    kind: 30023,
+                    created_at: Math.floor(Date.now() / 1000),
+                    tags: [
+                        ['d', crypto.randomUUID()],
+                        ['t', 'idea'],
+                        ['client', 'ideaflow']
+                    ],
+                    content: this.newIdea
+                };
+
+                // finalizeEvent adds id, pubkey, and sig
+                const event = window.NostrTools.finalizeEvent(eventTemplate, skBytes);
+
                 const response = await fetch('/api/ideas', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -99,11 +138,14 @@ function ideaFlow() {
 
                     htmx.ajax('GET', '/partials/recent-ideas', {target: '#idea-stream > div:last-child', swap: 'innerHTML'});
                 } else {
+                    const data = await response.json().catch(() => ({}));
                     this.submitStatus = 'error';
+                    showNotification(data.detail || 'Fehler beim Speichern der Idee');
                 }
             } catch (e) {
                 console.error('Submit error:', e);
                 this.submitStatus = 'error';
+                showNotification('Netzwerkfehler beim Speichern');
             } finally {
                 this.isSubmitting = false;
             }
@@ -115,6 +157,9 @@ function ideaFlow() {
 
             try {
                 const response = await fetch('/api/network-data');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 const data = await response.json();
 
                 if (data.nodes.length === 0) {
@@ -125,6 +170,11 @@ function ideaFlow() {
                 data.nodes.forEach(node => {
                     node.isOwn = node.pubkey === this.pubkey;
                 });
+
+                if (typeof ForceGraph === 'undefined') {
+                    container.innerHTML = '<p class="text-red-500 text-center p-8">Graph-Bibliothek nicht geladen</p>';
+                    return;
+                }
 
                 if (this.graph) {
                     this.graph.graphData(data);
@@ -146,6 +196,7 @@ function ideaFlow() {
             } catch (e) {
                 console.error('Network graph error:', e);
                 container.innerHTML = '<p class="text-red-500 text-center p-8">Fehler beim Laden des Netzwerks</p>';
+                showNotification('Netzwerk-Graph konnte nicht geladen werden');
             }
         }
     }
@@ -156,6 +207,10 @@ function renderClusters(event) {
     if (!container) return;
 
     try {
+        if (!event.detail.successful) {
+            throw new Error('Request failed');
+        }
+
         const data = JSON.parse(event.detail.xhr.response);
 
         if (!data.clusters || data.clusters.length === 0) {
@@ -188,5 +243,17 @@ function renderClusters(event) {
     } catch (e) {
         console.error('Clusters render error:', e);
         container.innerHTML = '<p class="text-red-500 text-center p-8">Fehler beim Laden der Cluster</p>';
+        showNotification('Cluster konnten nicht geladen werden');
     }
 }
+
+// Global HTMX error handler
+document.body.addEventListener('htmx:responseError', function(event) {
+    console.error('HTMX error:', event.detail);
+    showNotification('Serverfehler: ' + (event.detail.xhr.status || 'Verbindung fehlgeschlagen'));
+});
+
+document.body.addEventListener('htmx:sendError', function(event) {
+    console.error('HTMX send error:', event.detail);
+    showNotification('Netzwerkfehler: Server nicht erreichbar');
+});
