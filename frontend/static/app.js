@@ -40,6 +40,15 @@ function ideaFlow() {
         submitStatus: null,
         graph: null,
         nostrReady: false,
+        showKeyModal: false,
+        keyImportValue: '',
+        keyExportValue: '',
+        timeFilter: 'all',
+        showExportMenu: false,
+        showReferenceSearch: false,
+        referenceSearchQuery: '',
+        referenceSearchResults: [],
+        selectedReferences: [],
 
         async init() {
             const stored = localStorage.getItem('nostr_keys');
@@ -53,6 +62,10 @@ function ideaFlow() {
                 if (tab === 'network') {
                     this.$nextTick(() => this.loadNetworkGraph());
                 }
+            });
+
+            this.$watch('timeFilter', () => {
+                this.refreshIdeas();
             });
 
             // Wait for nostr-tools to load
@@ -90,6 +103,135 @@ function ideaFlow() {
             }
         },
 
+        openKeyModal() {
+            if (!this.privateKey || !window.NostrTools) {
+                showNotification('Keine Identität vorhanden oder Nostr-Bibliothek nicht geladen');
+                return;
+            }
+            try {
+                const skBytes = new Uint8Array(this.privateKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+                this.keyExportValue = window.NostrTools.nip19.nsecEncode(skBytes);
+                this.keyImportValue = '';
+                this.showKeyModal = true;
+            } catch (e) {
+                console.error('Key encoding error:', e);
+                showNotification('Fehler beim Kodieren des Schlüssels');
+            }
+        },
+
+        async exportKey() {
+            try {
+                await navigator.clipboard.writeText(this.keyExportValue);
+                showNotification('Schlüssel in Zwischenablage kopiert!', 'success');
+            } catch (e) {
+                console.error('Clipboard error:', e);
+                showNotification('Kopieren fehlgeschlagen');
+            }
+        },
+
+        importKey() {
+            const input = this.keyImportValue.trim();
+            if (!input) {
+                showNotification('Bitte einen Schlüssel eingeben');
+                return;
+            }
+            if (!window.NostrTools) {
+                showNotification('Nostr-Bibliothek nicht geladen');
+                return;
+            }
+
+            try {
+                let skBytes;
+
+                if (input.startsWith('nsec1')) {
+                    const decoded = window.NostrTools.nip19.decode(input);
+                    if (decoded.type !== 'nsec') {
+                        throw new Error('Ungültiges nsec-Format');
+                    }
+                    skBytes = decoded.data;
+                } else if (/^[0-9a-fA-F]{64}$/.test(input)) {
+                    skBytes = new Uint8Array(input.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+                } else {
+                    throw new Error('Ungültiges Format (erwartet: nsec1... oder 64-Zeichen Hex)');
+                }
+
+                const pk = window.NostrTools.getPublicKey(skBytes);
+                this.privateKey = Array.from(skBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+                this.pubkey = pk;
+
+                localStorage.setItem('nostr_keys', JSON.stringify({
+                    pubkey: this.pubkey,
+                    privateKey: this.privateKey
+                }));
+
+                this.showKeyModal = false;
+                showNotification('Schlüssel importiert!', 'success');
+            } catch (e) {
+                console.error('Key import error:', e);
+                showNotification(e.message || 'Ungültiger Schlüssel');
+            }
+        },
+
+        closeKeyModal() {
+            this.showKeyModal = false;
+            this.keyImportValue = '';
+            this.keyExportValue = '';
+        },
+
+        refreshIdeas() {
+            const timeParam = this.timeFilter !== 'all' ? `?time=${this.timeFilter}` : '';
+            htmx.ajax('GET', `/partials/recent-ideas${timeParam}`, {target: '#idea-stream > div:last-child', swap: 'innerHTML'});
+        },
+
+        exportIdeas(format) {
+            const params = new URLSearchParams();
+            params.set('format', format);
+            if (this.timeFilter !== 'all') {
+                params.set('time', this.timeFilter);
+            }
+            window.location.href = `/api/export?${params.toString()}`;
+            this.showExportMenu = false;
+        },
+
+        async searchReferences() {
+            if (!this.referenceSearchQuery.trim()) {
+                this.referenceSearchResults = [];
+                return;
+            }
+            try {
+                const response = await fetch(`/api/search?q=${encodeURIComponent(this.referenceSearchQuery)}&limit=5`);
+                const data = await response.json();
+                this.referenceSearchResults = data.results.filter(
+                    r => !this.selectedReferences.some(s => s.event_id === r.event_id)
+                );
+            } catch (e) {
+                console.error('Reference search error:', e);
+            }
+        },
+
+        addReference(idea) {
+            if (!this.selectedReferences.some(r => r.event_id === idea.event_id)) {
+                this.selectedReferences.push({
+                    event_id: idea.event_id,
+                    content_preview: idea.content_preview
+                });
+            }
+            this.referenceSearchQuery = '';
+            this.referenceSearchResults = [];
+        },
+
+        removeReference(eventId) {
+            this.selectedReferences = this.selectedReferences.filter(r => r.event_id !== eventId);
+        },
+
+        toggleReferenceSearch() {
+            this.showReferenceSearch = !this.showReferenceSearch;
+            if (!this.showReferenceSearch) {
+                this.referenceSearchQuery = '';
+                this.referenceSearchResults = [];
+            }
+        },
+
         async submitIdea() {
             if (!this.newIdea.trim()) {
                 showNotification('Bitte gib eine Idee ein');
@@ -111,14 +253,21 @@ function ideaFlow() {
                 // Convert hex string to Uint8Array
                 const skBytes = new Uint8Array(this.privateKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
 
+                const tags = [
+                    ['d', crypto.randomUUID()],
+                    ['t', 'idea'],
+                    ['client', 'ideaflow']
+                ];
+
+                // Add reference tags
+                for (const ref of this.selectedReferences) {
+                    tags.push(['e', ref.event_id]);
+                }
+
                 const eventTemplate = {
                     kind: 30023,
                     created_at: Math.floor(Date.now() / 1000),
-                    tags: [
-                        ['d', crypto.randomUUID()],
-                        ['t', 'idea'],
-                        ['client', 'ideaflow']
-                    ],
+                    tags: tags,
                     content: this.newIdea
                 };
 
@@ -133,6 +282,8 @@ function ideaFlow() {
 
                 if (response.ok) {
                     this.newIdea = '';
+                    this.selectedReferences = [];
+                    this.showReferenceSearch = false;
                     this.submitStatus = 'ok';
                     setTimeout(() => { this.submitStatus = null; }, 2000);
 

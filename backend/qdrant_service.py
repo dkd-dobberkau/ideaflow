@@ -1,12 +1,31 @@
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance, VectorParams, PointStruct,
-    Filter, FieldCondition, MatchValue
+    Filter, FieldCondition, MatchValue, Range
 )
 import os
 import uuid
+import time
 from typing import Optional
 from embedding_service import create_embedding
+
+
+def get_time_threshold(time_range: Optional[str]) -> Optional[int]:
+    """Convert time range string to Unix timestamp threshold."""
+    if not time_range or time_range == 'all':
+        return None
+
+    now = int(time.time())
+    ranges = {
+        '24h': 24 * 60 * 60,
+        '7d': 7 * 24 * 60 * 60,
+        '30d': 30 * 24 * 60 * 60
+    }
+
+    seconds = ranges.get(time_range)
+    if seconds:
+        return now - seconds
+    return None
 
 
 def event_id_to_uuid(event_id: str) -> str:
@@ -81,20 +100,31 @@ def store_idea(event_id: str, content: str, pubkey: str,
 
 
 def search_similar(query: str, limit: int = 10,
-                   pubkey_filter: Optional[str] = None) -> list[dict]:
+                   pubkey_filter: Optional[str] = None,
+                   time_range: Optional[str] = None) -> list[dict]:
     client = get_client()
     query_vector = create_embedding(query)
 
-    search_filter = None
+    filter_conditions = []
+
     if pubkey_filter:
-        search_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="pubkey",
-                    match=MatchValue(value=pubkey_filter)
-                )
-            ]
+        filter_conditions.append(
+            FieldCondition(
+                key="pubkey",
+                match=MatchValue(value=pubkey_filter)
+            )
         )
+
+    time_threshold = get_time_threshold(time_range)
+    if time_threshold:
+        filter_conditions.append(
+            FieldCondition(
+                key="created_at",
+                range=Range(gte=time_threshold)
+            )
+        )
+
+    search_filter = Filter(must=filter_conditions) if filter_conditions else None
 
     results = client.query_points(
         collection_name=COLLECTION_NAME,
@@ -167,12 +197,48 @@ def get_idea_by_event_id(event_id: str) -> Optional[dict]:
     }
 
 
-def get_all_vectors_with_payload(limit: int = 1000) -> list:
+def get_all_vectors_with_payload(limit: int = 1000, time_range: Optional[str] = None) -> list:
     client = get_client()
+
+    scroll_filter = None
+    time_threshold = get_time_threshold(time_range)
+    if time_threshold:
+        scroll_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="created_at",
+                    range=Range(gte=time_threshold)
+                )
+            ]
+        )
+
     points, _ = client.scroll(
         collection_name=COLLECTION_NAME,
         limit=limit,
+        scroll_filter=scroll_filter,
         with_vectors=True,
         with_payload=True
     )
     return points
+
+
+def find_referencing_ideas(event_id: str) -> list[dict]:
+    """Find ideas that reference the given event_id."""
+    client = get_client()
+
+    points, _ = client.scroll(
+        collection_name=COLLECTION_NAME,
+        limit=100,
+        with_payload=True
+    )
+
+    referencing = []
+    for point in points:
+        refs = point.payload.get("references", [])
+        if event_id in refs:
+            referencing.append({
+                "event_id": point.payload.get("nostr_event_id", str(point.id)),
+                **point.payload
+            })
+
+    return referencing

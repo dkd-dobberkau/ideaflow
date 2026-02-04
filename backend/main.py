@@ -1,17 +1,19 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from sse_starlette.sse import EventSourceResponse
 from contextlib import asynccontextmanager
 import asyncio
 import json
 import numpy as np
 from sklearn.cluster import KMeans
+from datetime import datetime
 
 from models import NostrEvent
 from qdrant_service import (
     init_collection, store_idea, search_similar,
-    find_related, get_all_vectors_with_payload, get_idea_by_event_id
+    find_related, get_all_vectors_with_payload, get_idea_by_event_id,
+    find_referencing_ideas
 )
 from nostr_client import NostrClient
 
@@ -109,8 +111,8 @@ async def create_idea(event: NostrEvent):
 
 
 @app.get("/api/search")
-async def search_ideas(q: str, limit: int = 10, pubkey: str = None):
-    results = search_similar(q, limit=limit, pubkey_filter=pubkey)
+async def search_ideas(q: str, limit: int = 10, pubkey: str = None, time: str = None):
+    results = search_similar(q, limit=limit, pubkey_filter=pubkey, time_range=time)
     return {"results": results}
 
 
@@ -144,6 +146,78 @@ async def get_clusters():
         })
 
     return {"clusters": list(clusters.values())}
+
+
+@app.get("/api/export")
+async def export_ideas(format: str = "json", pubkey: str = None, time: str = None):
+    points = get_all_vectors_with_payload(limit=1000, time_range=time)
+
+    if pubkey:
+        points = [p for p in points if p.payload.get("pubkey") == pubkey]
+
+    sorted_points = sorted(
+        points,
+        key=lambda p: p.payload.get("created_at", 0),
+        reverse=True
+    )
+
+    ideas = []
+    for point in sorted_points:
+        ideas.append({
+            "event_id": point.payload.get("nostr_event_id", str(point.id)),
+            "content": point.payload.get("content_preview", ""),
+            "pubkey": point.payload.get("pubkey", ""),
+            "created_at": point.payload.get("created_at", 0),
+            "references": point.payload.get("references", [])
+        })
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if format == "markdown":
+        lines = ["# IdeaFlow Export", f"\nExportiert: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"]
+        for idea in ideas:
+            created = datetime.fromtimestamp(idea["created_at"]).strftime("%d.%m.%Y %H:%M")
+            lines.append(f"## {created}")
+            lines.append(f"\n{idea['content']}\n")
+            lines.append(f"*Pubkey: {idea['pubkey'][:16]}...*\n")
+            if idea["references"]:
+                lines.append(f"*Referenzen: {', '.join(idea['references'][:3])}*\n")
+            lines.append("---\n")
+
+        content = "\n".join(lines)
+        return Response(
+            content=content,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f"attachment; filename=ideaflow_export_{timestamp}.md"}
+        )
+    else:
+        content = json.dumps({"ideas": ideas, "exported_at": timestamp}, indent=2, ensure_ascii=False)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=ideaflow_export_{timestamp}.json"}
+        )
+
+
+@app.get("/api/ideas/{event_id}/references")
+async def get_idea_references(event_id: str):
+    idea = get_idea_by_event_id(event_id)
+    if not idea:
+        raise HTTPException(404, "Idea not found")
+
+    referenced_ids = idea.get("references", [])
+    referenced = []
+    for ref_id in referenced_ids:
+        ref_idea = get_idea_by_event_id(ref_id)
+        if ref_idea:
+            referenced.append(ref_idea)
+
+    referencing = find_referencing_ideas(event_id)
+
+    return {
+        "referenced": referenced,
+        "referencing": referencing
+    }
 
 
 @app.get("/api/network-data")
@@ -195,11 +269,11 @@ async def stream(request: Request):
 
 
 @app.get("/partials/search-results", response_class=HTMLResponse)
-async def search_results_partial(q: str):
+async def search_results_partial(q: str, time: str = None):
     if not q.strip():
         return "<div class='text-gray-500'>Suchbegriff eingeben...</div>"
 
-    results = search_similar(q, limit=10)
+    results = search_similar(q, limit=10, time_range=time)
 
     html_parts = []
     for r in results:
@@ -225,8 +299,8 @@ async def search_results_partial(q: str):
 
 
 @app.get("/partials/recent-ideas", response_class=HTMLResponse)
-async def recent_ideas_partial():
-    points = get_all_vectors_with_payload(limit=20)
+async def recent_ideas_partial(time: str = None):
+    points = get_all_vectors_with_payload(limit=20, time_range=time)
 
     sorted_points = sorted(
         points,
@@ -287,10 +361,47 @@ def render_idea_card(event: dict, related: list) -> str:
 
 
 def render_idea_card_from_payload(payload: dict) -> str:
-    from datetime import datetime
     created = datetime.fromtimestamp(payload.get("created_at", 0)).strftime("%d.%m.%Y %H:%M")
+    event_id = payload.get("event_id") or payload.get("nostr_event_id", "")
 
-    related = find_related(payload["event_id"], limit=3)
+    # Get referenced ideas (what this idea links to)
+    referenced_ids = payload.get("references", [])
+    referenced_html = ""
+    if referenced_ids:
+        referenced_items = []
+        for ref_id in referenced_ids[:5]:
+            ref_idea = get_idea_by_event_id(ref_id)
+            if ref_idea:
+                referenced_items.append(
+                    f'<li><a href="#" hx-get="/components/idea-card/{ref_id}" '
+                    f'hx-target="#idea-detail">{ref_idea.get("content_preview", "")[:50]}...</a></li>'
+                )
+        if referenced_items:
+            referenced_html = f'''
+            <div class="references">
+                <h4>Verweist auf</h4>
+                <ul>{"".join(referenced_items)}</ul>
+            </div>
+            '''
+
+    # Get referencing ideas (what links to this idea)
+    referencing = find_referencing_ideas(event_id) if event_id else []
+    referencing_html = ""
+    if referencing:
+        referencing_items = [
+            f'<li><a href="#" hx-get="/components/idea-card/{r["event_id"]}" '
+            f'hx-target="#idea-detail">{r.get("content_preview", "")[:50]}...</a></li>'
+            for r in referencing[:5]
+        ]
+        referencing_html = f'''
+        <div class="references">
+            <h4>Verwiesen von</h4>
+            <ul>{"".join(referencing_items)}</ul>
+        </div>
+        '''
+
+    # Similar ideas
+    related = find_related(event_id, limit=3) if event_id else []
     related_html = ""
     if related:
         related_items = [
@@ -312,6 +423,8 @@ def render_idea_card_from_payload(payload: dict) -> str:
             <time>{created}</time>
             <span class="pubkey">{payload.get("pubkey", "")[:16]}...</span>
         </div>
+        {referenced_html}
+        {referencing_html}
         {related_html}
     </article>
     '''
