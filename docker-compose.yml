@@ -15,13 +15,12 @@ services:
       retries: 3
 
   nostr-relay:
-    image: scsibug/nostr-rs-relay:latest
+    image: dockurr/strfry:latest
     ports:
-      - "8080:8080"
+      - "7777:7777"
     volumes:
-      - nostr_data:/usr/src/app/db
-      - ./config.toml:/usr/src/app/config.toml
-    command: ["./nostr-rs-relay", "--config", "/usr/src/app/config.toml"]
+      - nostr_data:/strfry-db
+      - ./strfry.conf:/etc/strfry.conf
 
   backend:
     build: ./backend
@@ -30,7 +29,7 @@ services:
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
-      - NOSTR_RELAY_URL=ws://nostr-relay:8080
+      - NOSTR_RELAY_URL=ws://nostr-relay:7777
       - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
     depends_on:
       - qdrant
