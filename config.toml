@@ -1,0 +1,19 @@
+[info]
+relay_url = "ws://localhost:8080"
+name = "IdeaFlow Relay"
+description = "Private relay for idea management"
+
+[database]
+engine = "sqlite"
+data_directory = "db"
+
+[network]
+port = 8080
+address = "0.0.0.0"
+
+[limits]
+max_event_bytes = 131072
+max_ws_message_bytes = 131072
+
+[authorization]
+pubkey_whitelist = []

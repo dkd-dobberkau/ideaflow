@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Docker volumes (data persisted in named volumes)
+qdrant_data/
+nostr_data/
+model_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Playwright
+.playwright-mcp/
+*.png

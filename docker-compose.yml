@@ -1,0 +1,46 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nostr-relay:
+    image: scsibug/nostr-rs-relay:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - nostr_data:/usr/src/app/db
+      - ./config.toml:/usr/src/app/config.toml
+    command: ["./nostr-rs-relay", "--config", "/usr/src/app/config.toml"]
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - NOSTR_RELAY_URL=ws://nostr-relay:8080
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+    depends_on:
+      - qdrant
+      - nostr-relay
+    volumes:
+      - ./backend:/app
+      - ./frontend:/app/frontend
+      - model_cache:/root/.cache
+
+volumes:
+  qdrant_data:
+  nostr_data:
+  model_cache:
