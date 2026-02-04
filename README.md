@@ -2,6 +2,8 @@
 
 Dezentrale Ideen-Management-Webapp mit semantischer Suche und Nostr-Protokoll.
 
+![IdeaFlow Main View](docs/screenshots/01-main-view.png)
+
 ## Features
 
 - **Dezentrale Identität** - Nostr-Schlüsselpaare (secp256k1), kein zentraler Account
@@ -124,6 +126,33 @@ Ideen verwenden kind 30023 (replaceable long-form content):
   ]
 }
 ```
+
+## Screenshots
+
+### Semantische Suche
+Finde ähnliche Ideen basierend auf Bedeutung, nicht nur Keywords.
+
+![Semantic Search](docs/screenshots/03-semantic-search.png)
+
+### Detail-Ansicht
+Zeigt verwandte Ideen und Verknüpfungen.
+
+![Detail View](docs/screenshots/02-detail-view.png)
+
+### Netzwerk-Graph
+Visualisiere Verbindungen zwischen Ideen.
+
+![Network Graph](docs/screenshots/04-network-graph.png)
+
+### Cluster-Analyse
+Automatische Gruppierung thematisch verwandter Ideen.
+
+![Clusters](docs/screenshots/05-clusters.png)
+
+### Schlüsselverwaltung
+Export/Import deiner Nostr-Identität im nsec-Format.
+
+![Key Management](docs/screenshots/06-key-management.png)
 
 ## Lizenz
 

@@ -44,4 +44,7 @@ htmlcov/
 
 # Playwright
 .playwright-mcp/
+
+# Screenshots (except docs)
 *.png
+!docs/screenshots/*.png
