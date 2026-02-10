@@ -1,0 +1,49 @@
+# ============================================================
+# Mittwald Stack: Garage + Admin + strfry
+# ACHTUNG: mw stack deploy / mittwald deploy-action ersetzt
+# den GESAMTEN Stack. Alle Services muessen enthalten sein!
+# ============================================================
+
+services:
+  garage:
+    image: olivierdo/garage-staticpub:v2.2.0
+    volumes:
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    environment:
+      GARAGE_RPC_SECRET: "{{ .Env.GARAGE_RPC_SECRET }}"
+      GARAGE_ADMIN_TOKEN: "{{ .Env.GARAGE_ADMIN_TOKEN }}"
+    ports:
+      - "3900:3900/tcp"
+      - "3902:3902/tcp"
+
+  admin:
+    image: olivierdo/staticpub-admin:latest
+    ports:
+      - "8000:8000/tcp"
+    environment:
+      S3_BUCKET: "{{ .Env.S3_BUCKET }}"
+      S3_ENDPOINT: http://garage:3900
+      AWS_REGION: garage
+      DOMAIN: "{{ .Env.DOMAIN }}"
+      AWS_ACCESS_KEY_ID: "{{ .Env.AWS_ACCESS_KEY_ID }}"
+      AWS_SECRET_ACCESS_KEY: "{{ .Env.AWS_SECRET_ACCESS_KEY }}"
+      ADMIN_USER: "{{ .Env.ADMIN_USER }}"
+      ADMIN_PASSWORD: "{{ .Env.ADMIN_PASSWORD }}"
+
+  strfry:
+    image: "{{ .Env.STRFRY_IMAGE }}"
+    ports:
+      - "7777/tcp"
+    volumes:
+      - strfry-data:/app/strfry-db
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "512m"
+
+volumes:
+  garage-meta: {}
+  garage-data: {}
+  strfry-data: {}

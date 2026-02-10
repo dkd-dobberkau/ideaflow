@@ -19,7 +19,7 @@ services:
     ports:
       - "7777:7777"
     volumes:
-      - nostr_data:/strfry-db
+      - nostr_data:/app/strfry-db
       - ./strfry.conf:/etc/strfry.conf
 
   backend:
