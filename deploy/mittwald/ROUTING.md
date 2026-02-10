@@ -1,6 +1,7 @@
 # Mittwald Ingress / Domain Routing
 
 Alle Services laufen im selben Mittwald-Projekt (`p-d49y5m`).
+IP: `185.215.158.240`
 
 ## Container-IDs
 
@@ -15,9 +16,19 @@ Alle Services laufen im selben Mittwald-Projekt (`p-d49y5m`).
 | Domain | Ziel-Container | Port | Zweck |
 |--------|---------------|------|-------|
 | `publiqhub.com` | garage | 3902/tcp | Static Hosting (S3 Web) |
-| `admin.publiqhub.com` | admin | 8000/tcp | Admin-Interface |
+| `admin.publiqhub.com` | admin | 8000/tcp | Admin-Interface (HTTP Basic Auth) |
+| `relay.publiqhub.com` | strfry | 7777/tcp | Nostr Relay (`wss://relay.publiqhub.com`) |
 | `p-d49y5m.project.space` | garage | 3902/tcp | Static Hosting (Mittwald-Domain) |
 | `www.publiqhub.com` | - | - | Redirect auf `https://publiqhub.com/` |
+
+## DNS
+
+DNS wird von Mittwald verwaltet (managed A-Records).
+Nameserver: `ns01.agenturserver.de`, `ns01.agenturserver.co`, `ns01.agenturserver.it`
+
+Beim Anlegen eines neuen Virtualhosts erstellt Mittwald automatisch eine DNS-Zone
+mit managed A-Record. SSL-Zertifikate (Let's Encrypt) werden ebenfalls automatisch
+ausgestellt sobald DNS propagiert ist.
 
 ## Routen wiederherstellen
 
@@ -33,6 +44,11 @@ mw domain virtualhost create \
 mw domain virtualhost create \
   --hostname admin.publiqhub.com \
   --path-to-container /:2af579b4-0da5-4a04-9c99-76dbc33b361d:8000/tcp
+
+# relay.publiqhub.com -> strfry
+mw domain virtualhost create \
+  --hostname relay.publiqhub.com \
+  --path-to-container /:aa416fc6-27c2-47bd-8424-758d36a7ac57:7777/tcp
 
 # project.space -> garage web (System-Domain, kann nicht geloescht werden)
 # Update via API:
