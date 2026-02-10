@@ -1,5 +1,9 @@
 FROM dockurr/strfry:latest
 
 COPY strfry.conf /etc/strfry.conf
+COPY deploy/mittwald/write-policy.sh /etc/strfry/write-policy.sh
+COPY deploy/mittwald/allowed-pubkeys.txt /etc/strfry/allowed-pubkeys.txt
+
+RUN chmod +x /etc/strfry/write-policy.sh
 
 EXPOSE 7777

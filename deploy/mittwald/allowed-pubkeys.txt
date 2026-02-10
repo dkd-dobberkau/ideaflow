@@ -1,0 +1,3 @@
+# IdeaFlow Relay - Erlaubte Pubkeys (hex-Format, eine pro Zeile)
+# Zeilen mit # werden ignoriert
+5267470e3393e038b0f3df3ab94ef0336851ef59245aa9d827e8f0dd3431bdf7
